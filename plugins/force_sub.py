@@ -1,5 +1,12 @@
-from plugins.commands import actual_start_handler  # import your main start logic
-from bot import app as Client
+from pyrogram import Client, filters
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from pyrogram.errors import UserNotParticipant
+from config import FORCE_SUB_CHANNEL, START_PIC, ADMIN
+
+# Optional - only if used
+#from helper.database import present_user, add_user
+import random
+import asyncio
 
 @Client.on_message(filters.command("start") & filters.private)
 async def force_sub_check(client, message):
