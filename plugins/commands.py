@@ -25,7 +25,7 @@ async def actual_start_handler(client, message):
         except Exception as e:
             await client.send_message(-1002457905787, f"{e}")
     start_pic = random.choice(START_PIC)
-    
+
     # Create inline buttons
     buttons = [
         [
@@ -38,9 +38,9 @@ async def actual_start_handler(client, message):
         ]
     ]
     reply_markup = InlineKeyboardMarkup(buttons)
-    
-    # Send the welcome message with the random image and inline button
-await client.send_photo(
+
+    # ✅ Proper indentation here
+    await client.send_photo(
         chat_id=message.chat.id,
         photo=start_pic,
         caption="👋 Welcome to the Anime PaheBot! \n\nUse the buttons below for assistance or to contact the owner",
