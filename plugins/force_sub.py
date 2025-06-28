@@ -17,9 +17,9 @@ async def force_sub_check(client, message):
         if member.status not in ["member", "administrator", "creator"]:
             raise UserNotParticipant
     except UserNotParticipant:
-        invite_link = await client.export_chat_invite_link(FORCE_SUB_CHANNEL)
+        channel_link = f"https://t.me/{FORCE_SUB_CHANNEL}"
         buttons = [
-            [InlineKeyboardButton("📢 Join Channel", url=invite_link)],
+            [InlineKeyboardButton("📢 Join Channel", url=channel_link)],
             [InlineKeyboardButton("✅ I've Joined", callback_data="check_sub")]
         ]
         await message.reply("🚫 Please join our channel to use this bot.", reply_markup=InlineKeyboardMarkup(buttons))
