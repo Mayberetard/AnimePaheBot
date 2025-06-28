@@ -1,4 +1,5 @@
 from plugins.commands import actual_start_handler  # import your main start logic
+from bot import app as Client
 
 @Client.on_message(filters.command("start") & filters.private)
 async def force_sub_check(client, message):
