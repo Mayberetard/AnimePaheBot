@@ -6,6 +6,7 @@ import os
 API_ID = 1234567
 API_HASH = ""
 BOT_TOKEN = ""
+FORCE_SUB_CHANNEL = ""  # without @
 #Logs
 LOG_CHANNEL = "" 
 # MongoDB setup
