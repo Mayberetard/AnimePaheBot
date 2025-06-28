@@ -33,7 +33,7 @@ async def actual_start_handler(client, message):
             InlineKeyboardButton("Help", callback_data="help")
         ],
         [
-            InlineKeyboardButton("Dev", url="https://t.me/r4h4t_69",
+            InlineKeyboardButton("Dev", url="https://t.me/r4h4t_69"),
             InlineKeyboardButton("Close", callback_data="close")
         ]
     ]
