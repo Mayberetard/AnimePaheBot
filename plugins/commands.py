@@ -17,15 +17,13 @@ user_queries = {}
 
 
 @Client.on_message(filters.command("start") & filters.private)
-def start(client, message):
-    # Choose a random image from the list
+async def actual_start_handler(client, message):
     id = message.from_user.id
     if not present_user(id):
         try:
             add_user(id)
         except Exception as e:
-            client.send_message(-1002457905787, f"{e}")
-            pass
+            await client.send_message(-1002457905787, f"{e}")
     start_pic = random.choice(START_PIC)
     
     # Create inline buttons
