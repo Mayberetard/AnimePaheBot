@@ -31,10 +31,11 @@ def start(client, message):
     # Create inline buttons
     buttons = [
         [
-            InlineKeyboardButton("Owner", url="https://t.me/r4h4t_69"),
+            InlineKeyboardButton("Owner", url="https://t.me/100GIFT"),
             InlineKeyboardButton("Help", callback_data="help")
         ],
         [
+            InlineKeyboardButton("Dev", url="https://t.me/r4h4t_69",
             InlineKeyboardButton("Close", callback_data="close")
         ]
     ]
