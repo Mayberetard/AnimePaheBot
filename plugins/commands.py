@@ -39,8 +39,8 @@ async def actual_start_handler(client, message):
     ]
     reply_markup = InlineKeyboardMarkup(buttons)
     
-    # Send the welcome message with the random image and inline buttons
- await client.send_photo(
+    # Send the welcome message with the random image and inline button
+await client.send_photo(
         chat_id=message.chat.id,
         photo=start_pic,
         caption="👋 Welcome to the Anime PaheBot! \n\nUse the buttons below for assistance or to contact the owner",
