@@ -2,7 +2,7 @@ from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from pyrogram.errors import UserNotParticipant
 from config import FORCE_SUB_CHANNEL, START_PIC, ADMIN
-
+from plugins.command import actual_start_handler  # import your main start logic
 # Optional - only if used
 #from helper.database import present_user, add_user
 import random
