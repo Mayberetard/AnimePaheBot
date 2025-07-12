@@ -16,7 +16,7 @@ from bs4 import BeautifulSoup
 import os, random, re, asyncio
 
 episode_data = {}
-
+episode_urls = {}
 
 @Client.on_callback_query(filters.regex(r"^anime_"))
 async def anime_details(client, callback_query: CallbackQuery):
