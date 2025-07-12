@@ -7,18 +7,16 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, CallbackQ
 from plugins.queue import add_to_queue, remove_from_queue
 from plugins.kwik import extract_kwik_link
 from plugins.direct_link import get_dl_link
-from plugins.headers import *       # provides `session = requests.session()`
-from plugins.file import *
+from plugins.headers import session
+from plugins.file import create_short_name, sanitize_filename, download_file, send_and_delete_file, remove_directory
 from plugins.commands import user_queries
-from helper.database import *
+from helper.database import save_upload_method, get_upload_method, get_thumbnail, get_caption
 from config import DOWNLOAD_DIR
 from bs4 import BeautifulSoup
-import os
-import re
-import asyncio
+import os, random, re, asyncio
 
 episode_data = {}
-episode_urls = {}
+
 
 @Client.on_callback_query(filters.regex(r"^anime_"))
 async def anime_details(client, callback_query: CallbackQuery):
@@ -26,31 +24,45 @@ async def anime_details(client, callback_query: CallbackQuery):
     query = user_queries.get(callback_query.message.chat.id, "")
     search_url = f"https://animepahe.ru/api?m=search&q={query.replace(' ', '+')}"
     response = session.get(search_url).json()
-    anime = next(a for a in response['data'] if a['session'] == session_id)
+
+    anime = next(anime for anime in response['data'] if anime['session'] == session_id)
     title = anime['title']
+    anime_type = anime['type']
+    episodes = anime['episodes']
+    status = anime['status']
+    season = anime['season']
+    year = anime['year']
+    score = anime['score']
     poster_url = anime['poster']
+    anime_link = f"https://animepahe.ru/anime/{session_id}"
+
+    message_text = (
+        f"**Title**: {title}\n"
+        f"**Type**: {anime_type}\n"
+        f"**Episodes**: {episodes}\n"
+        f"**Status**: {status}\n"
+        f"**Season**: {season}\n"
+        f"**Year**: {year}\n"
+        f"**Score**: {score}\n"
+        f"[Anime Link]({anime_link})\n\n"
+        f"**Bot Made By**\n"
+        f"    **[RAHAT](tg://user?id=1235222889)**"
+    )
+
     episode_data[callback_query.message.chat.id] = {
         "session_id": session_id,
         "poster": poster_url,
         "title": title
     }
-    message_text = (
-        f"**Title**: {anime['title']}\n"
-        f"**Type**: {anime['type']}\n"
-        f"**Episodes**: {anime['episodes']}\n"
-        f"**Status**: {anime['status']}\n"
-        f"**Season**: {anime['season']}\n"
-        f"**Year**: {anime['year']}\n"
-        f"**Score**: {anime['score']}\n"
-        f"[Anime Link](https://animepahe.ru/anime/{session_id})\n\n"
-        f"**Bot Made By**\n    **[RAHAT](tg://user?id=1235222889)**"
-    )
+
+    episode_button = InlineKeyboardMarkup([[InlineKeyboardButton("Episodes", callback_data="episodes")]])
     await client.send_photo(
         chat_id=callback_query.message.chat.id,
         photo=poster_url,
         caption=message_text,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Episodes", callback_data="episodes")]])
+        reply_markup=episode_button
     )
+
 
 @Client.on_callback_query(filters.regex(r"^episodes$"))
 async def episode_list(client, callback_query: CallbackQuery, page=1):
@@ -58,87 +70,121 @@ async def episode_list(client, callback_query: CallbackQuery, page=1):
     if not session_data:
         await callback_query.message.reply_text("Session ID not found.")
         return
-    session_id = session_data["session_id"]
-    resp = session.get(f"https://animepahe.ru/api?m=release&id={session_id}&sort=episode_asc&page={page}")
-    data = resp.json()
-    episodes = data["data"]
-    last_page = int(data["last_page"])
-    session_data.update({
-        "current_page": page,
-        "last_page": last_page,
-        "episodes": {ep['episode']: ep['session'] for ep in episodes}
+
+    session_id = session_data['session_id']
+    episodes_url = f"https://animepahe.ru/api?m=release&id={session_id}&sort=episode_asc&page={page}"
+    response = session.get(episodes_url).json()
+
+    last_page = int(response["last_page"])
+    episodes = response['data']
+    episode_data[callback_query.message.chat.id].update({
+        'current_page': page,
+        'last_page': last_page,
+        'episodes': {ep['episode']: ep['session'] for ep in episodes}
     })
-    buttons = [[InlineKeyboardButton(f"Episode {ep['episode']}", callback_data=f"ep_{ep['episode']}")] for ep in episodes]
-    nav = []
-    if page > 1: nav.append(InlineKeyboardButton("<", callback_data=f"page_{page-1}"))
-    if page < last_page: nav.append(InlineKeyboardButton(">", callback_data=f"page_{page+1}"))
-    if nav: buttons.append(nav)
-    markup = InlineKeyboardMarkup(buttons)
-    if callback_query.message.reply_markup is None:
-        await callback_query.message.reply_text(f"Page {page}/{last_page}: Select an episode:", reply_markup=markup)
-    else:
-        await callback_query.message.edit_reply_markup(markup)
+
+    episode_buttons = [[InlineKeyboardButton(f"Episode {ep['episode']}", callback_data=f"ep_{ep['episode']}")] for ep in episodes]
+    nav_buttons = []
+    if page > 1:
+        nav_buttons.append(InlineKeyboardButton("<", callback_data=f"page_{page - 1}"))
+    if page < last_page:
+        nav_buttons.append(InlineKeyboardButton(">", callback_data=f"page_{page + 1}"))
+    if nav_buttons:
+        episode_buttons.append(nav_buttons)
+
+    reply_markup = InlineKeyboardMarkup(episode_buttons)
+    await callback_query.message.edit_reply_markup(reply_markup)
+
 
 @Client.on_callback_query(filters.regex(r"^page_"))
 async def navigate_pages(client, callback_query: CallbackQuery):
     new_page = int(callback_query.data.split("_")[1])
-    session_data = episode_data.get(callback_query.message.chat.id, {})
-    current = session_data.get("current_page", 1)
-    last = session_data.get("last_page", 1)
+    session_data = episode_data.get(callback_query.message.chat.id)
+
+    if not session_data:
+        await callback_query.message.reply_text("Session ID not found.")
+        return
+
+    current_page = session_data.get('current_page', 1)
+    last_page = session_data.get('last_page', 1)
+
     if new_page < 1:
         await callback_query.answer("You're already on the first page.", show_alert=True)
-    elif new_page > last:
+    elif new_page > last_page:
         await callback_query.answer("You're already on the last page.", show_alert=True)
     else:
         await episode_list(client, callback_query, page=new_page)
 
+
 @Client.on_callback_query(filters.regex(r"^ep_"))
 async def fetch_download_links(client, callback_query: CallbackQuery):
-    ep_num = int(callback_query.data.split("_")[1])
+    episode_number = int(callback_query.data.split("_")[1])
     user_id = callback_query.message.chat.id
-    session_data = episode_data.get(user_id, {})
-    if not session_data or "episodes" not in session_data:
+    session_data = episode_data.get(user_id)
+
+    if not session_data or 'episodes' not in session_data:
         await callback_query.message.reply_text("Episode not found.")
         return
-    if ep_num not in session_data["episodes"]:
+
+    session_id = session_data['session_id']
+    episodes = session_data['episodes']
+
+    if episode_number not in episodes:
         await callback_query.message.reply_text("Episode not found.")
         return
-    session_data["current_episode"] = ep_num
-    session_id = session_data["session_id"]
-    ep_session = session_data["episodes"][ep_num]
-    resp = session.get(f"https://animepahe.ru/play/{session_id}/{ep_session}")
-    soup = BeautifulSoup(resp.content, "html.parser")
+
+    episode_data[user_id]['current_episode'] = episode_number
+    episode_session = episodes[episode_number]
+    episode_url = f"https://animepahe.ru/play/{session_id}/{episode_session}"
+
+    response = session.get(episode_url)
+    soup = BeautifulSoup(response.content, "html.parser")
     download_links = soup.select("#pickDownload a.dropdown-item")
+
     if not download_links:
         await callback_query.message.reply_text("No download links found.")
         return
-    buttons = [[InlineKeyboardButton(link.text.strip(), callback_data=f"dl_{link['href']}")] for link in download_links]
-    await callback_query.message.reply_text("Select a download link:", reply_markup=InlineKeyboardMarkup(buttons))
+
+    download_buttons = [
+        [InlineKeyboardButton(link.get_text(strip=True), callback_data=f"dl_{link['href']}")]
+        for link in download_links
+    ]
+    reply_markup = InlineKeyboardMarkup(download_buttons)
+    await callback_query.message.reply_text("Select a download link:", reply_markup=reply_markup)
+
 
 @Client.on_callback_query(filters.regex(r"set_method_"))
 async def change_upload_method(client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
-    method = callback_query.data.split("_")[2]
-    save_upload_method(user_id, method)
-    await callback_query.answer(f"Upload method set to {method.capitalize()}")
-    doc = "✅" if method == "document" else "❌"
-    vid = "✅" if method == "video" else "❌"
-    await callback_query.message.edit_reply_markup(
-        InlineKeyboardMarkup([[InlineKeyboardButton(f"Document ({doc})", callback_data="set_method_document"),
-                               InlineKeyboardButton(f"Video ({vid})", callback_data="set_method_video")]])
-    )
+    data = callback_query.data.split("_")[2]
+    save_upload_method(user_id, data)
+    await callback_query.answer(f"Upload method set to {data.capitalize()}")
+
+    document_status = "✅" if data == "document" else "❌"
+    video_status = "✅" if data == "video" else "❌"
+
+    buttons = [
+        [
+            InlineKeyboardButton(f"Document ({document_status})", callback_data="set_method_document"),
+            InlineKeyboardButton(f"Video ({video_status})", callback_data="set_method_video")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(buttons)
+    try:
+        await callback_query.message.edit_reply_markup(reply_markup)
+    except Exception:
+        pass
+
 
 @Client.on_callback_query(filters.regex(r"^dl_"))
 async def download_and_upload_file(client, callback_query: CallbackQuery):
     download_url = callback_query.data.split("dl_")[1]
     kwik_link = extract_kwik_link(download_url)
 
-    # ✅ Validate the kwik link
     if not kwik_link.startswith("http"):
         await callback_query.message.reply_text(f"❌ {kwik_link}")
         return
 
-    # ✅ Proceed only if valid
     direct_link = await asyncio.to_thread(get_dl_link, kwik_link)
     user_id = callback_query.from_user.id
     username = callback_query.from_user.username or "Unknown User"
@@ -194,9 +240,12 @@ async def callback_query_handler(client, callback_query: CallbackQuery):
                 "4. /queue - View active downloads.\n"
                 "5. /set_caption - Set custom caption.\n"
                 "6. /see_caption - See current custom caption.\n"
-                "7. /del_caption - Delete current custom caption"
+                "7. /del_caption - Delete current custom caption."
             ),
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Close", callback_data="close")]])
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("Close", callback_data="close")]
+            ])
         )
+
     elif callback_query.data == "close":
         await callback_query.message.delete()
