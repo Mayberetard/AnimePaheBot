@@ -2,7 +2,7 @@
 #..........Anyone Can Modify This As He Likes..........#
 #..........Just one requests do not remove my credit..........#
 
- from pyrogram import Client, filters
+from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 import pyrogram.errors
 from bs4 import BeautifulSoup
