@@ -132,6 +132,10 @@ async def change_upload_method(client, callback_query: CallbackQuery):
 async def download_and_upload_file(client, callback_query: CallbackQuery):
     download_url = callback_query.data.split("dl_")[1]
     kwik_link = extract_kwik_link(download_url)
+
+if not kwik_link.startswith("http"):
+    await callback_query.message.reply_text(f"❌ {kwik_link}")
+    return
     direct_link = await asyncio.to_thread(get_dl_link, kwik_link)
     user_id = callback_query.from_user.id
     username = callback_query.from_user.username or "Unknown User"
