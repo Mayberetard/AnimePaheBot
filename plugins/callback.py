@@ -3,249 +3,286 @@
 #..........Just one requests do not remove my credit..........#
 
 from pyrogram import Client, filters
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
-from plugins.queue import add_to_queue, remove_from_queue
-from plugins.kwik import extract_kwik_link
-from plugins.direct_link import get_dl_link
-from plugins.headers import *
-from plugins.file import *
-from plugins.commands import user_queries
-from helper.database import *
-from config import DOWNLOAD_DIR
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+import pyrogram.errors
 from bs4 import BeautifulSoup
-import os
-import re
-import requests
+from plugins.headers import *
+from helper.database import *
+from plugins.queue import *
+from config import START_PIC, ADMIN
+import random
+import asyncio
 
-episode_data = {}
-episode_urls = {}
+user_queries = {}
 
-@Client.on_callback_query(filters.regex(r"^anime_"))
-async def anime_details(client, callback_query: CallbackQuery):
-    session_id = callback_query.data.split("anime_")[1]
-    query = user_queries.get(callback_query.message.chat.id, "")
-    search_url = f"https://animepahe.ru/api?m=search&q={query.replace(' ', '+')}"
-    response = session.get(search_url).json()
+@Client.on_message(filters.command("start") & filters.private)
+async def actual_start_handler(client, message):
+    id = message.from_user.id
+    if not present_user(id):
+        try:
+            add_user(id)
+        except Exception as e:
+            await client.send_message(-1002457905787, f"{e}")
+    start_pic = random.choice(START_PIC)
 
-    anime = next(anime for anime in response['data'] if anime['session'] == session_id)
-    title = anime['title']
-    message_text = (
-        f"**Title**: {anime['title']}\n"
-        f"**Type**: {anime['type']}\n"
-        f"**Episodes**: {anime['episodes']}\n"
-        f"**Status**: {anime['status']}\n"
-        f"**Season**: {anime['season']}\n"
-        f"**Year**: {anime['year']}\n"
-        f"**Score**: {anime['score']}\n"
-        f"[Anime Link](https://animepahe.ru/anime/{session_id})\n\n"
-        f"**Bot Made By**\n"
-        f"    **[RAHAT](tg://user?id=1235222889)**"
-    )
-
-    episode_data[callback_query.message.chat.id] = {
-        "session_id": session_id,
-        "poster": anime['poster'],
-        "title": title
-    }
+    buttons = [
+        [
+            InlineKeyboardButton("Owner", url="https://t.me/100GIFT"),
+            InlineKeyboardButton("Help", callback_data="help")
+        ],
+        [
+            InlineKeyboardButton("Dev", url="https://t.me/r4h4t_69"),
+            InlineKeyboardButton("Close", callback_data="close")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(buttons)
 
     await client.send_photo(
-        chat_id=callback_query.message.chat.id,
-        photo=anime['poster'],
-        caption=message_text,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Episodes", callback_data="episodes")]])
+        chat_id=message.chat.id,
+        photo=start_pic,
+        caption="👋 Welcome to the Anime PaheBot! \n\nUse the buttons below for assistance or to contact the owner",
+        reply_markup=reply_markup
     )
 
 
-@Client.on_callback_query(filters.regex(r"^episodes$"))
-async def episode_list(client, callback_query: CallbackQuery, page=1):
-    session_data = episode_data.get(callback_query.message.chat.id)
-    if not session_data:
-        await callback_query.message.reply_text("Session ID not found.")
+@Client.on_message(filters.command("set_thumb") & filters.private)
+async def set_thumbnail(client, message):
+    if not message.reply_to_message or not message.reply_to_message.photo:
+        await message.reply_text("Please reply to a photo with this command.")
         return
 
-    session_id = session_data['session_id']
-    response = session.get(f"https://animepahe.ru/api?m=release&id={session_id}&sort=episode_asc&page={page}").json()
-    episodes = response['data']
-    last_page = int(response["last_page"])
+    file_id = message.reply_to_message.photo.file_id
+    save_thumbnail(message.from_user.id, file_id)
+    await message.reply_text("Thumbnail saved successfully!")
 
-    episode_data[callback_query.message.chat.id].update({
-        "current_page": page,
-        "last_page": last_page,
-        "episodes": {ep['episode']: ep['session'] for ep in episodes}
-    })
 
-    episode_buttons = [[InlineKeyboardButton(f"Episode {ep['episode']}", callback_data=f"ep_{ep['episode']}")] for ep in episodes]
-    nav_buttons = []
-    if page > 1:
-        nav_buttons.append(InlineKeyboardButton("<", callback_data=f"page_{page - 1}"))
-    if page < last_page:
-        nav_buttons.append(InlineKeyboardButton(">", callback_data=f"page_{page + 1}"))
-    if nav_buttons:
-        episode_buttons.append(nav_buttons)
-
-    markup = InlineKeyboardMarkup(episode_buttons)
-    if callback_query.message.reply_markup is None:
-        await callback_query.message.reply_text(f"Page {page}/{last_page}: Select an episode:", reply_markup=markup)
+@Client.on_message(filters.command("see_thumb") & filters.private)
+async def see_thumbnail(client, message):
+    thumbnail = get_thumbnail(message.from_user.id)
+    if thumbnail:
+        await client.send_photo(message.chat.id, thumbnail, caption="Your custom thumbnail.")
     else:
-        await callback_query.message.edit_reply_markup(markup)
+        await message.reply_text("No custom thumbnail found in the database.")
 
 
-@Client.on_callback_query(filters.regex(r"^page_"))
-async def navigate_pages(client, callback_query: CallbackQuery):
-    new_page = int(callback_query.data.split("_")[1])
-    session_data = episode_data.get(callback_query.message.chat.id)
-
-    if not session_data:
-        await callback_query.message.reply_text("Session ID not found.")
-        return
-
-    current_page = session_data.get('current_page', 1)
-    last_page = session_data.get('last_page', 1)
-
-    if new_page < 1:
-        await callback_query.answer("You're already on the first page.", show_alert=True)
-    elif new_page > last_page:
-        await callback_query.answer("You're already on the last page.", show_alert=True)
+@Client.on_message(filters.command("del_thumb") & filters.private)
+async def del_thumbnail(client, message):
+    if get_thumbnail(message.from_user.id):
+        delete_thumbnail(message.from_user.id)
+        await message.reply_text("Custom thumbnail deleted successfully!")
     else:
-        await episode_list(client, callback_query, page=new_page)
+        await message.reply_text("No custom thumbnail found in the database.")
 
 
-@Client.on_callback_query(filters.regex(r"^ep_"))
-async def fetch_download_links(client, callback_query: CallbackQuery):
-    episode_number = int(callback_query.data.split("_")[1])
-    user_id = callback_query.message.chat.id
-    session_data = episode_data.get(user_id)
-
-    if not session_data or 'episodes' not in session_data:
-        await callback_query.message.reply_text("Episode not found.")
-        return
-
-    session_id = session_data['session_id']
-    episodes = session_data['episodes']
-    if episode_number not in episodes:
-        await callback_query.message.reply_text("Episode not found.")
-        return
-
-    episode_data[user_id]['current_episode'] = episode_number
-    episode_session = episodes[episode_number]
-    soup = BeautifulSoup(session.get(f"https://animepahe.ru/play/{session_id}/{episode_session}").content, "html.parser")
-    download_links = soup.select("#pickDownload a.dropdown-item")
-
-    if not download_links:
-        await callback_query.message.reply_text("No download links found.")
-        return
-
-    buttons = [[InlineKeyboardButton(link.get_text(strip=True), callback_data=f"dl_{link['href']}")] for link in download_links]
-    await callback_query.message.reply_text("Select a download link:", reply_markup=InlineKeyboardMarkup(buttons))
+@Client.on_message(filters.command("set_caption") & filters.private)
+async def save_caption_command(client, message):
+    if message.reply_to_message and message.reply_to_message.text:
+        caption = message.reply_to_message.text
+        save_caption(message.from_user.id, caption)
+        await message.reply_text(f"<b>Caption saved:</b> \n\n <code>{caption}</code>")
+    else:
+        await message.reply_text("Please reply to a text message to save it as a caption.")
 
 
-@Client.on_callback_query(filters.regex(r"set_method_"))
-async def change_upload_method(client, callback_query: CallbackQuery):
-    user_id = callback_query.from_user.id
-    method = callback_query.data.split("_")[2]
-    save_upload_method(user_id, method)
-    await callback_query.answer(f"Upload method set to {method.capitalize()}")
+@Client.on_message(filters.command("see_caption") & filters.private)
+async def see_caption_command(client, message):
+    caption = get_caption(message.from_user.id)
+    if caption:
+        await message.reply_text(f"<b>Your current caption:</b> \n\n <code>{caption}</code>")
+    else:
+        await message.reply_text("No custom caption found in the database.")
 
-    doc_status = "✅" if method == "document" else "❌"
-    vid_status = "✅" if method == "video" else "❌"
+
+@Client.on_message(filters.command("del_caption") & filters.private)
+async def delete_caption_command(client, message):
+    if get_caption(message.from_user.id):
+        delete_caption(message.from_user.id)
+        await message.reply_text("Custom caption deleted successfully!")
+    else:
+        await message.reply_text("No custom caption found in the database.")
+
+
+@Client.on_message(filters.command("options") & filters.private)
+async def set_upload_options(client, message):
+    user_id = message.from_user.id
+    current_method = get_upload_method(user_id)
+
+    document_status = "✅" if current_method == "document" else "❌"
+    video_status = "✅" if current_method == "video" else "❌"
 
     buttons = [[
-        InlineKeyboardButton(f"Document ({doc_status})", callback_data="set_method_document"),
-        InlineKeyboardButton(f"Video ({vid_status})", callback_data="set_method_video")
+        InlineKeyboardButton(f"Document ({document_status})", callback_data="set_method_document"),
+        InlineKeyboardButton(f"Video ({video_status})", callback_data="set_method_video")
     ]]
-    await callback_query.message.edit_reply_markup(InlineKeyboardMarkup(buttons))
+
+    reply_markup = InlineKeyboardMarkup(buttons)
+    await message.reply_text(f"Your Current Upload Method: {current_method.capitalize()}", reply_markup=reply_markup)
 
 
-@Client.on_callback_query(filters.regex(r"^dl_"))
-async def download_and_upload_file(client, callback_query: CallbackQuery):
-    from asyncio import to_thread
-
-    download_url = callback_query.data.split("dl_")[1]
-    kwik_link = extract_kwik_link(download_url)
-
+@Client.on_message(filters.command("anime") & filters.private)
+async def search_anime(client, message):
+    id = message.from_user.id
+    if not present_user(id):
+        try:
+            add_user(id)
+        except Exception as e:
+            await client.send_message(-1002457905787, f"{e}")
+    
     try:
-        direct_link = get_dl_link(kwik_link)
-    except Exception as e:
-        await callback_query.message.reply_text(f"Error generating download link: {str(e)}")
+        query = message.text.split("/anime ", maxsplit=1)[1]
+    except IndexError:
+        await message.reply_text("Usage: <code>/anime anime_name</code>")
         return
 
-    username = callback_query.from_user.username or "Unknown User"
-    user_id = callback_query.from_user.id
-    add_to_queue(user_id, username, direct_link)
+    search_url = f"https://animepahe.ru/api?m=search&q={query.replace(' ', '+')}"
+    resp = session.get(search_url)
 
-    episode_number = episode_data.get(user_id, {}).get('current_episode', 'Unknown')
-    title = episode_data.get(user_id, {}).get('title', 'Unknown Title')
-    download_button_title = next(
-        (b.text for row in callback_query.message.reply_markup.inline_keyboard
-         for b in row if b.callback_data == f"dl_{download_url}"),
-        "Unknown Source"
-    )
-
-    resolution = re.search(r"\b\d{3,4}p\b", download_button_title)
-    resolution = resolution.group() if resolution else download_button_title
-    type = "Dub" if 'eng' in download_button_title else "Sub"
-    short_title = create_short_name(title)
-    filename = sanitize_filename(f"[{type}] [{short_title}] [EP {episode_number}] [{resolution}].mp4")
-    random_str = random_string(5)
-
-    user_download_dir = os.path.join(DOWNLOAD_DIR, str(user_id), random_str)
-    os.makedirs(user_download_dir, exist_ok=True)
-    download_path = os.path.join(user_download_dir, filename)
-
-    dl_msg = await callback_query.message.reply_text(
-        f"<b>Added to queue:</b>\n <pre>{filename}</pre>\n<b>Downloading now...</b>"
-    )
+    if resp.status_code != 200:
+        await message.reply_text(f"❌ Failed to fetch anime. Server returned {resp.status_code}")
+        return
 
     try:
-        await to_thread(download_file, direct_link, download_path)
-        await dl_msg.edit("<b>Episode downloaded, uploading...</b>")
+        response = resp.json()
+    except Exception:
+        await message.reply_text("❌ The server did not return valid data. Try again later.")
+        return
 
-        user_thumbnail = get_thumbnail(user_id)
-        poster_url = episode_data.get(user_id, {}).get("poster", None)
+    if response.get('total', 0) == 0:
+        await message.reply_text("Anime not found.")
+        return
 
-        if user_thumbnail:
-            thumb_path = await client.download_media(user_thumbnail)
-        elif poster_url:
-            response = requests.get(poster_url, stream=True)
-            thumb_path = os.path.join(user_download_dir, "thumb.jpg")
-            with open(thumb_path, 'wb') as f:
-                for chunk in response.iter_content(1024):
-                    f.write(chunk)
+    user_queries[message.chat.id] = query
+    anime_buttons = [
+        [InlineKeyboardButton(anime['title'], callback_data=f"anime_{anime['session']}")]
+        for anime in response['data']
+    ]
+
+    gif_url = "https://telegra.ph/file/33067bb12f7165f8654f9.mp4"
+    await message.reply_video(
+        video=gif_url,
+        caption=f"Search Result For <code>{query}</code>",
+        reply_markup=InlineKeyboardMarkup(anime_buttons),
+        quote=True
+    )
+
+
+@Client.on_message(filters.command("users") & filters.private & filters.user(ADMIN))
+async def get_users(client, message):
+    msg = await message.reply("<b>Processing ...</b>")
+    users = full_userbase()
+    await msg.edit(f"{len(users)} users are using this bot")
+
+
+@Client.on_message(filters.private & filters.command("broadcast") & filters.user(ADMIN))
+async def send_text(client, message):
+    if message.reply_to_message:
+        query = full_userbase()
+        broadcast_msg = message.reply_to_message
+        total = successful = blocked = deleted = unsuccessful = 0
+
+        pls_wait = await message.reply("<i>Broadcasting Message.. This will Take Some Time</i>")
+
+        for chat_id in query:
+            try:
+                await broadcast_msg.copy(chat_id)
+                successful += 1
+            except pyrogram.errors.FloodWait as e:
+                await asyncio.sleep(e.x)
+                await broadcast_msg.copy(chat_id)
+                successful += 1
+            except pyrogram.errors.UserIsBlocked:
+                del_user(chat_id)
+                blocked += 1
+            except pyrogram.errors.InputUserDeactivated:
+                del_user(chat_id)
+                deleted += 1
+            except:
+                unsuccessful += 1
+            total += 1
+
+        status = f"""<b><u>Broadcast Completed</u>
+
+Total Users: <code>{total}</code>
+Successful: <code>{successful}</code>
+Blocked Users: <code>{blocked}</code>
+Deleted Accounts: <code>{deleted}</code>
+Unsuccessful: <code>{unsuccessful}</code></b>"""
+
+        return await pls_wait.edit(status)
+    else:
+        msg = await message.reply("<code>Use this command as a reply to a message without any spaces.</code>")
+        await asyncio.sleep(8)
+        await msg.delete()
+
+
+@Client.on_message(filters.command("queue") & filters.private)
+async def view_queue(client, message):
+    with download_lock:
+        if not global_queue:
+            await message.reply_text("No active downloads.")
+            return
+
+        user_task_counts = {}
+        for username, link in global_queue:
+            user_task_counts[username] = user_task_counts.get(username, 0) + 1
+
+        queue_text = "Active Downloads:\n"
+        for i, (username, task_count) in enumerate(user_task_counts.items(), start=1):
+            user_profile_link = f"[{username}](https://t.me/{username})"
+            queue_text += f"{i}. {user_profile_link} (Active Task = {task_count})\n"
+
+        await message.reply_text(queue_text, disable_web_page_preview=True)
+
+
+@Client.on_message(filters.command("latest") & filters.private)
+async def send_latest_anime(client, message):
+    try:
+        API_URL = "https://animepahe.ru/api?m=airing&page=1"
+        response = session.get(API_URL)
+        if response.status_code == 200:
+            data = response.json()
+            anime_list = data.get('data', [])
+
+            if not anime_list:
+                await message.reply_text("No latest anime available at the moment.")
+                return
+
+            latest_anime_text = "<b>📺 Latest Airing Anime:</b>\n\n"
+            for idx, anime in enumerate(anime_list, start=1):
+                title = anime.get('anime_title')
+                anime_session = anime.get('anime_session')
+                episode = anime.get('episode')
+                link = f"https://animepahe.ru/anime/{anime_session}"
+                latest_anime_text += f"<b>{idx}) <a href='{link}'>{title}</a> [E{episode}]</b>\n"
+
+            await message.reply_text(latest_anime_text, disable_web_page_preview=True)
         else:
-            thumb_path = None
-
-        user_caption = get_caption(user_id)
-        caption_to_use = user_caption if user_caption else filename
-
-        await to_thread(send_and_delete_file, client, callback_query.message.chat.id, download_path, thumb_path, caption_to_use, user_id)
-        remove_from_queue(user_id, direct_link)
-
-        await dl_msg.edit("<b><pre>Episode Uploaded 🎉</pre></b>")
-
-        if thumb_path and os.path.exists(thumb_path):
-            os.remove(thumb_path)
-        if os.path.exists(user_download_dir):
-            remove_directory(user_download_dir)
-
+            await message.reply_text(f"Failed to fetch data from the API. Status code: {response.status_code}")
     except Exception as e:
-        await callback_query.message.reply_text(f"Error: {str(e)}")
+        await client.send_message(-1002457905787, f"Error: {e}")
+        await message.reply_text("Something went wrong. Please try again later.")
 
 
-@Client.on_callback_query()
-async def callback_query_handler(client, callback_query: CallbackQuery):
-    if callback_query.data == "help":
-        await callback_query.message.edit_text(
-            text="Here is how to use the bot:\n\n"
-                 "1. /anime <anime_name> - Search for an anime.\n"
-                 "2. /set_thumb - Set a custom thumbnail.\n"
-                 "3. /options - Set upload options (Document or Video).\n"
-                 "4. /queue - View active downloads.\n"
-                 "5. /set_caption - Set custom caption.\n"
-                 "6. /see_caption - See current custom caption.\n"
-                 "7. /del_caption - Delete current custom caption",
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("Close", callback_data="close")]]
-            )
-        )
-    elif callback_query.data == "close":
-        await callback_query.message.delete()
+@Client.on_message(filters.command("airing") & filters.private)
+async def send_airing_anime(client, message):
+    try:
+        API_URL = "https://animepahe.ru/anime/airing"
+        response = session.get(API_URL)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, "html.parser")
+            anime_list = soup.select(".index-wrapper .index a")
+
+            if not anime_list:
+                await message.reply_text("No airing anime available at the moment.")
+                return
+
+            airing_anime_text = "<b>🎬 Currently Airing Anime:</b>\n\n"
+            for idx, anime in enumerate(anime_list, start=1):
+                title = anime.get("title", "Unknown Title")
+                airing_anime_text += f"<b>{idx}) {title}</b>\n"
+
+            await message.reply_text(airing_anime_text, disable_web_page_preview=True)
+        else:
+            await message.reply_text(f"Failed to fetch data. Status Code: {response.status_code}")
+    except Exception:
+        await message.reply_text("Something went wrong. Please try again later.")
