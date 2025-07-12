@@ -2,7 +2,7 @@
 #..........Anyone Can Modify This As He Likes..........#
 #..........Just one requests do not remove my credit..........#
 
-from pyrogram import Client, filters
+ from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 import pyrogram.errors
 from bs4 import BeautifulSoup
@@ -12,7 +12,6 @@ from plugins.queue import *
 from config import START_PIC, ADMIN
 import random
 import asyncio
-import requests
 
 user_queries = {}
 
@@ -136,9 +135,19 @@ async def search_anime(client, message):
         return
 
     search_url = f"https://animepahe.ru/api?m=search&q={query.replace(' ', '+')}"
-    response = requests.get(search_url).json()
+    resp = session.get(search_url)
 
-    if response['total'] == 0:
+    if resp.status_code != 200:
+        await message.reply_text(f"❌ Failed to fetch anime. Server returned {resp.status_code}")
+        return
+
+    try:
+        response = resp.json()
+    except Exception:
+        await message.reply_text("❌ The server did not return valid data. Try again later.")
+        return
+
+    if response.get('total', 0) == 0:
         await message.reply_text("Anime not found.")
         return
 
@@ -229,7 +238,7 @@ async def view_queue(client, message):
 async def send_latest_anime(client, message):
     try:
         API_URL = "https://animepahe.ru/api?m=airing&page=1"
-        response = requests.get(API_URL)
+        response = session.get(API_URL)
         if response.status_code == 200:
             data = response.json()
             anime_list = data.get('data', [])
@@ -258,7 +267,7 @@ async def send_latest_anime(client, message):
 async def send_airing_anime(client, message):
     try:
         API_URL = "https://animepahe.ru/anime/airing"
-        response = requests.get(API_URL)
+        response = session.get(API_URL)
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, "html.parser")
             anime_list = soup.select(".index-wrapper .index a")
@@ -275,5 +284,5 @@ async def send_airing_anime(client, message):
             await message.reply_text(airing_anime_text, disable_web_page_preview=True)
         else:
             await message.reply_text(f"Failed to fetch data. Status Code: {response.status_code}")
-    except Exception as e:
+    except Exception:
         await message.reply_text("Something went wrong. Please try again later.")
