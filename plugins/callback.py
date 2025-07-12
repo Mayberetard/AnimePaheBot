@@ -177,22 +177,27 @@ async def change_upload_method(client, callback_query: CallbackQuery):
 
 
 @Client.on_callback_query(filters.regex(r"^dl_"))
-async def download_and_upload_file(client, callback_query: CallbackQuery):
+async def download_and_upload_file(client, callback_query):
     download_url = callback_query.data.split("dl_")[1]
     kwik_link = extract_kwik_link(download_url)
 
-    if not kwik_link.startswith("http"):
-        await callback_query.message.reply_text(f"❌ {kwik_link}")
+    try:
+        direct_link = get_dl_link(kwik_link)
+    except Exception as e:
+        await callback_query.message.reply_text(f"Error generating download link: {str(e)}")
         return
 
-    direct_link = await asyncio.to_thread(get_dl_link, kwik_link)
-    user_id = callback_query.from_user.id
     username = callback_query.from_user.username or "Unknown User"
+    user_id = callback_query.from_user.id
     add_to_queue(user_id, username, direct_link)
+
     session_data = episode_data.get(user_id, {})
     ep_num = session_data.get("current_episode", "Unknown")
     title = session_data.get("title", "Unknown Title")
-    download_button_title = next((btn.text for row in callback_query.message.reply_markup.inline_keyboard for btn in row if btn.callback_data == f"dl_{download_url}"), "Unknown Source")
+    download_button_title = next(
+        (btn.text for row in callback_query.message.reply_markup.inline_keyboard for btn in row if btn.callback_data == f"dl_{download_url}"),
+        "Unknown Source"
+    )
     res_match = re.search(r"\b\d{3,4}p\b", download_button_title)
     res = res_match.group() if res_match else download_button_title
     typ = "Dub" if "eng" in download_button_title else "Sub"
@@ -202,12 +207,17 @@ async def download_and_upload_file(client, callback_query: CallbackQuery):
     user_dir = os.path.join(DOWNLOAD_DIR, str(user_id), random_str)
     os.makedirs(user_dir, exist_ok=True)
     download_path = os.path.join(user_dir, filename)
-    dl_msg = await callback_query.message.reply_text(f"Added to queue:\n<code>{filename}</code>\nDownloading now...")
+
+    dl_msg = await callback_query.message.reply_text(
+        f"Added to queue:\n<code>{filename}</code>\nDownloading now...")
+
     try:
-        await asyncio.to_thread(download_file, direct_link, download_path)
+        download_file(direct_link, download_path)
         await dl_msg.edit("Episode downloaded, uploading...")
+
         user_thumb = get_thumbnail(user_id)
         poster = session_data.get("poster")
+
         if user_thumb:
             thumb_path = await client.download_media(user_thumb)
         elif poster:
@@ -218,13 +228,19 @@ async def download_and_upload_file(client, callback_query: CallbackQuery):
                     f.write(chunk)
         else:
             thumb_path = None
+
         user_caption = get_caption(user_id)
         caption = user_caption if user_caption else filename
-        await asyncio.to_thread(send_and_delete_file, client, callback_query.message.chat.id, download_path, thumb_path, caption, user_id)
+
+        send_and_delete_file(client, callback_query.message.chat.id, download_path, thumb_path, caption, user_id)
         remove_from_queue(user_id, direct_link)
         await dl_msg.edit("Episode Uploaded 🎉")
-        if thumb_path and os.path.exists(thumb_path): os.remove(thumb_path)
-        if os.path.exists(user_dir): remove_directory(user_dir)
+
+        if thumb_path and os.path.exists(thumb_path):
+            os.remove(thumb_path)
+        if os.path.exists(user_dir):
+            remove_directory(user_dir)
+
     except Exception as e:
         await callback_query.message.reply_text(f"Error: {e}")
 
